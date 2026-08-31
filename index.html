@@ -423,7 +423,7 @@
             if(currentMode === 'puzzle') {
                 instList.innerHTML = `
                     <li><b>[탐색 시작]</b>을 눌러 문제를 불러옵니다.</li>
-                    <li>빈칸을 <span class="text-blue-600 font-bold">상, 하, 좌, 우</span> 순으로 이동한 상태들이 표시됩니다.</li>
+                    <li>빈칸을 <span class="text-blue-600 font-bold">상, 좌, 하, 우</span> 순으로 이동한 상태들이 표시됩니다.</li>
                     <li>각 상태의 <b>g(이동 횟수)</b>와 <b>h(잘못된 타일 수)</b>를 계산해 적어보세요.</li>
                     <li>계산 완료 후 $f(n)$이 <b>가장 작은 노드</b>를 클릭하면 다음으로 진행됩니다.</li>
                 `;
@@ -496,16 +496,17 @@
             });
         }
 
-        /* 8퍼즐 이동 규칙 (위, 아래, 왼쪽, 오른쪽 순서) */
+        /* 8퍼즐 이동 규칙: 생성 우선순위에 맞춰 [위, 왼쪽, 아래, 오른쪽] 순으로 생성되도록 수정 */
         function getPossibleMoves(state) {
             const moves = [];
             const zeroIdx = state.indexOf(0);
             const r = Math.floor(zeroIdx / 3);
             const c = zeroIdx % 3;
 
+            // 순서 변경: 위쪽 -> 왼쪽 -> 아래쪽 -> 오른쪽
             if (r > 0) { let s = [...state]; [s[zeroIdx], s[zeroIdx-3]] = [s[zeroIdx-3], s[zeroIdx]]; moves.push({s, dir:'위쪽'}); }
-            if (r < 2) { let s = [...state]; [s[zeroIdx], s[zeroIdx+3]] = [s[zeroIdx+3], s[zeroIdx]]; moves.push({s, dir:'아래쪽'}); }
             if (c > 0) { let s = [...state]; [s[zeroIdx], s[zeroIdx-1]] = [s[zeroIdx-1], s[zeroIdx]]; moves.push({s, dir:'왼쪽'}); }
+            if (r < 2) { let s = [...state]; [s[zeroIdx], s[zeroIdx+3]] = [s[zeroIdx+3], s[zeroIdx]]; moves.push({s, dir:'아래쪽'}); }
             if (c < 2) { let s = [...state]; [s[zeroIdx], s[zeroIdx+1]] = [s[zeroIdx+1], s[zeroIdx]]; moves.push({s, dir:'오른쪽'}); }
             return moves;
         }
@@ -675,18 +676,16 @@
         function checkAndExpandPuzzleNode(selectedNodeId) {
             let allCorrect = true;
             let minF = Infinity;
-            let bestNodes = [];
+            let bestNodeId = null;
 
+            // 1. 방금 생성되어 입력창(input)이 있는 노드들만 값을 올바르게 입력했는지 검증
             for (const id in puzzleState.treeData) {
                 const node = puzzleState.treeData[id];
                 if (node.isLeaf && document.getElementById(`${id}_g`)) {
-                    const expectedF = node.g + node.h;
-                    if (expectedF < minF) { minF = expectedF; bestNodes = [id]; } 
-                    else if (expectedF === minF) { bestNodes.push(id); }
-
                     const gInput = document.getElementById(`${id}_g`);
                     const hInput = document.getElementById(`${id}_h`);
                     const fInput = document.getElementById(`${id}_f`);
+                    const expectedF = node.g + node.h;
 
                     const check = (el, val) => {
                         if(parseInt(el.value) === val) {
@@ -707,29 +706,71 @@
                 return;
             }
 
-            if (!bestNodes.includes(selectedNodeId)) {
-                showModal('오답', `$f(n)$ 값이 가장 작은 노드를 선택해야 합니다.<br>현재 최소 $f(n)$ 값은 <b>${minF}</b> 입니다.`);
+            // 2. 모든 리프(Leaf) 노드를 순회하며 최소 f(n) 및 우선순위에 따른 단일 최고 노드 탐색
+            for (const id in puzzleState.treeData) {
+                const node = puzzleState.treeData[id];
+                if (node.isLeaf) {
+                    const expectedF = node.g + node.h;
+                    // 노드 ID에서 숫자값 추출 (예: 'node_5' -> 5)
+                    const numId = parseInt(id.split('_')[1]);
+                    const currentBestNumId = bestNodeId ? parseInt(bestNodeId.split('_')[1]) : Infinity;
+
+                    if (expectedF < minF) { 
+                        minF = expectedF; 
+                        bestNodeId = id; 
+                    } 
+                    else if (expectedF === minF) { 
+                        // 타이브레이커 적용: 먼저 Open된 노드(ID 값이 더 작은 노드)
+                        // (위, 왼쪽, 아래, 오른쪽 순으로 생성되므로 방향 우선순위도 자동으로 적용됨)
+                        if (numId < currentBestNumId) {
+                            bestNodeId = id;
+                        }
+                    }
+                }
+            }
+
+            // 3. 선택한 노드가 최우선순위 노드가 아닌 경우 진행을 막고 알림을 표시
+            if (selectedNodeId !== bestNodeId) {
+                showModal('오답', 
+                    `$f(n)$ 값이 가장 작은 노드를 선택해야 합니다. 현재 최소값은 <b>${minF}</b> 입니다.<br><br>` +
+                    `<div class="text-sm text-left bg-gray-50 p-4 rounded-lg mt-2 border border-gray-200">` +
+                    `<b>※ $f(n)$ 값이 같을 때의 우선순위 규칙:</b><br>` +
+                    `<ol class="list-decimal pl-5 mt-1 space-y-1">` +
+                    `<li><b>먼저 생성(Open)된 노드</b> 우선</li>` +
+                    `<li>동일한 부모에서 파생되었다면 <b>위쪽 > 왼쪽 > 아래쪽 > 오른쪽</b> 순서로 우선</li>` +
+                    `</ol>` +
+                    `</div>`
+                );
                 return;
             }
 
+            // 4. 선택된 노드를 처리하고 다른 Open 노드들의 상태 유지
             for (const id in puzzleState.treeData) {
                 const node = puzzleState.treeData[id];
-                if (node.isLeaf && document.getElementById(`${id}_g`)) {
+                if (node.isLeaf) {
                     const box = document.getElementById(`${id}_box`);
-                    box.classList.remove('selectable');
-                    box.onclick = null; 
                     
-                    const wrap = document.getElementById(`${id}_wrap`);
-                    const inputPanel = wrap.querySelector('.input-panel');
-                    if(inputPanel) inputPanel.remove();
+                    // 입력창이 띄워져있던 노드들은 계산이 끝났으므로 텍스트로 전환
+                    if (document.getElementById(`${id}_g`)) {
+                        const wrap = document.getElementById(`${id}_wrap`);
+                        const inputPanel = wrap.querySelector('.input-panel');
+                        if(inputPanel) inputPanel.remove();
+                        
+                        const fText = document.createElement('div');
+                        fText.className = 'absolute top-full mt-3 left-1/2 transform -translate-x-1/2 w-max text-center text-sm font-bold text-gray-600 bg-white px-4 py-1.5 rounded-full border shadow-sm z-10';
+                        fText.innerHTML = `f = ${node.g} + ${node.h} = <span class="text-blue-600">${node.g + node.h}</span>`;
+                        box.appendChild(fText);
+                    }
                     
-                    const fText = document.createElement('div');
-                    fText.className = 'absolute top-full mt-3 left-1/2 transform -translate-x-1/2 w-max text-center text-sm font-bold text-gray-600 bg-white px-4 py-1.5 rounded-full border shadow-sm z-10';
-                    fText.innerHTML = `f = ${node.g} + ${node.h} = <span class="text-blue-600">${node.g + node.h}</span>`;
-                    box.appendChild(fText);
-                    
-                    if(id !== selectedNodeId) {
-                        box.style.opacity = '0.4'; 
+                    // 방금 선택된 노드는 확장될 것이므로 클릭(선택)을 막음
+                    if(id === selectedNodeId) {
+                        box.classList.remove('selectable');
+                        box.onclick = null; 
+                    } 
+                    // 선택되지 않은 다른 리프 노드들은 후보로 계속 유지되도록 막지 않음
+                    else {
+                        box.classList.add('selectable');
+                        box.style.opacity = '1';
                     }
                 }
             }
@@ -871,7 +912,7 @@
                 }
             });
 
-            // 현재 탐색 가능한 모든 Open List 노드를 추출 (수정 1: 이전 단계 노드 유지)
+            // 현재 탐색 가능한 모든 Open List 노드를 추출 (이전 단계 노드 유지)
             let frontier = Object.values(graphState.openList);
 
             if(frontier.length === 0) {
@@ -908,7 +949,7 @@
                         </div>
                     </div>
                 `;
-                // 수정 3: 노드 선택 리스트에 f(n) 값을 함께 표시
+                // 노드 선택 리스트에 f(n) 값을 함께 표시
                 select.innerHTML += `<option value="${n.id}">노드 ${n.id} (f = ${n.f})</option>`;
             });
 
@@ -946,7 +987,7 @@
             let selectedNodeData = graphState.openList[selectedId];
             graphState.gVals[selectedId] = selectedNodeData.g;
             
-            // 수정 2: 모든 연결 간선이 아닌, 정확히 부모 노드에서 선택된 노드로 향하는 1개의 간선만 하이라이트
+            // 모든 연결 간선이 아닌, 정확히 부모 노드에서 선택된 노드로 향하는 1개의 간선만 하이라이트
             cy.edges(`[source = "${selectedNodeData.parentId}"][target = "${selectedId}"]`).addClass('path');
             
             processGraphStep(selectedId);
